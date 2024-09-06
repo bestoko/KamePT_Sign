@@ -5,7 +5,7 @@
 
 
 ```
-ql repo https://github.com/bestoko/KamePT_Sign "kamept.py" "" "sendNotify"
+ql repo https://github.com/bestoko/KamePT_Sign.git "kamept.py" "" "sendNotify"
 ```
 
 青龙面板新增环境变量：`KAMEPT_COOKIE` , 值类似
