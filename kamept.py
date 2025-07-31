@@ -43,7 +43,8 @@ def start(cookie):
             if "这是您的第" in rsp_text:
                 msg += '签到成功!\n'
                 # 先匹配当前魔力值信息
-                magic_value = re.search(r"魔力值.*?(\d+(\,\d+)?(\.\d+)?)", rsp_text).group(1).replace(',', '')
+                magic_match = re.search(r'魔力值.*?<a href="mybonus\.php">使用</a>\]:\s*([\d,.]+)', rsp_text)
+                magic_value = magic_match.group(1).replace(',', '')
                 msg = msg + "当前魔力值为: " + magic_value + " 。"
                 # 匹配当前签到提示
                 pattern = r'这是您的第 <b>(\d+)</b>[\s\S]*?今日签到排名：<b>(\d+)</b>'
