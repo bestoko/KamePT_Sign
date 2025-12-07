@@ -1,93 +1,97 @@
 # -*- coding: utf-8 -*-
 """
-cron: 0 0 1,13 * * ?
+cron: 0 9 * * *
 new Env('KamePT');
 """
-
-# from sendNotify import send  # 调试
-from notify import send  # 导入青龙后自动有这个文件
+from notify import send
 import requests
 import re
 import os
 import time
+
 requests.packages.urllib3.disable_warnings()
+
 
 def start(cookie):
     max_retries = 3
     retries = 0
     msg = ""
+
+    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+    headers = {
+        'Cookie': cookie,
+        'User-Agent': user_agent,
+        'Referer': 'https://kamept.com/index.php',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Connection': 'keep-alive'
+    }
+
     while retries < max_retries:
         try:
-            msg += "第{}次执行签到\n".format(str(retries+1))
             sign_in_url = "https://kamept.com/attendance.php"
-            headers = {
-                'Cookie': cookie,
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "accept-language": "zh-SG,zh;q=0.9,en-US;q=0.8,en;q=0.7,ja-JP;q=0.6,ja;q=0.5,zh-CN;q=0.4",
-                "priority": "u=0, i",
-                "referer": "https://kamept.com/index.php",
-                "sec-ch-ua": "\"Not)A;Brand\";v=\"99\", \"Google Chrome\";v=\"127\", \"Chromium\";v=\"127\"",
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": "\"Windows\"",
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "same-origin",
-                "sec-fetch-user": "?1",
-                "upgrade-insecure-requests": "1",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
-            }
-            rsp = requests.get(url=sign_in_url, headers=headers, timeout=15, verify=False)
-            
+
+            # 发起请求
+            rsp = requests.get(url=sign_in_url, headers=headers, timeout=20, verify=False)
             rsp_text = rsp.text
-            success = False
-            if "这是您的第" in rsp_text:
-                msg += '签到成功!\n'
-                # 先匹配当前魔力值信息
-                magic_match = re.search(r'魔力值.*?<a href="mybonus\.php">使用</a>\]:\s*([\d,.]+)', rsp_text)
-                magic_value = magic_match.group(1).replace(',', '')
-                msg = msg + "当前魔力值为: " + magic_value + " 。"
-                # 匹配当前签到提示
-                pattern = r'这是您的第 <b>(\d+)</b>[\s\S]*?今日签到排名：<b>(\d+)</b>'
-                result = re.search(pattern, rsp_text)
-                result = result.group()
-                # 剔除多余字符
-                result = result.replace("<b>", "")
-                result = result.replace("</b>", "")
-                result = result.replace("点击白色背景的圆点进行补签。", "")
-                result = result.replace('<span style="float:right">', "")
-                msg += result
-                success = True
-            elif "https://www.gov.cn/" in rsp_text:
-                msg += "Cookie值错误!响应跳转到第三方网站,请检查网站cookie值"
-            elif "503 Service Temporarily" in rsp_text or "502 Bad Gateway" in rsp_text:
-                msg += "服务器异常！\n"
-            else:
-                msg += "未知异常!\n"
-                msg += rsp_text + '\n'
-            
-            if success:
-                print("签到结果: ",msg)
-                send("KamePT 签到结果", msg)
-                break  # 成功执行签到，跳出循环
-            elif retries >= max_retries:
-                print("达到最大重试次数，签到失败。")
-                send("KamePT 签到结果", msg)
+
+            # --- 状态判断 ---
+            if "Just a moment" in rsp_text or "503 Service Temporarily" in rsp_text:
+                print("触发 Cloudflare 盾，正在重试...")
+                msg = "访问被拦截 (CF盾)，请检查 cf_clearance 是否过期。"
+
+            elif "login.php" in rsp.url or "用户登录" in rsp_text:
+                print("Cookie 失效，重定向到了登录页")
+                msg = "Cookie 已失效，请重新获取。"
                 break
+
+            elif "这是您的第" in rsp_text or "已签到" in rsp_text or "签到成功" in rsp_text:
+                # --- 成功逻辑 ---
+                msg += 'KamePT 签到成功！\n'
+
+                # 1. 提取魔力值 (兼容带逗号的数字)
+                magic_match = re.search(r'魔力值.*?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)', rsp_text)
+                if magic_match:
+                    msg += f"当前魔力: {magic_match.group(1)}\n"
+
+                # 2. 提取天数
+                days_match = re.search(r'这是您的第.*?(\d+).*?次签到', rsp_text)
+                if days_match:
+                    msg += f"累计签到: {days_match.group(1)} 天\n"
+
+                # 3. 提取补签卡数量
+                card_match = re.search(r'补签卡.*?(\d+).*?张', rsp_text)
+                if card_match:
+                    msg += f"补签卡数: {card_match.group(1)} 张\n"
+
+                # 4. 提取今日排名
+                rank_match = re.search(r'今日签到排名.*?(\d+)', rsp_text)
+                if rank_match:
+                    msg += f"今日排名: {rank_match.group(1)}"
+
+                print(msg)
+                send("KamePT 签到结果", msg)
+                return
+
             else:
-                retries += 1
-                print("等待20秒后进行重试...")
-                time.sleep(20)
-        except Exception as e:
-            print("签到失败，失败原因:"+str(e))
-            send("KamePT 签到结果", str(e))
+                msg = f"未检测到签到成功标识，状态码: {rsp.status_code}"
+
             retries += 1
-            if retries >= max_retries:
-                print("达到最大重试次数，签到失败。")
-                break
-            else:
-                print("等待20秒后进行重试...")
-                time.sleep(20)
+            time.sleep(3)
+
+        except Exception as e:
+            msg = f"请求异常: {str(e)}"
+            retries += 1
+            time.sleep(3)
+
+    # 循环结束仍未 return，发送失败通知
+    print("最终执行失败")
+    send("KamePT 签到失败", msg)
+
 
 if __name__ == "__main__":
     cookie = os.getenv("KAMEPT_COOKIE")
-    start(cookie)
+    if not cookie:
+        print("未找到环境变量 KAMEPT_COOKIE")
+    else:
+        start(cookie)
